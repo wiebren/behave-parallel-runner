@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools >= 64.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "behave-parallel-runner"
+description = "Parallel test runner for behave: run feature files in worker processes with --jobs N"
+readme = "README.md"
+license = {text = "BSD-2-Clause"}
+authors = [{name = "Wiebren Braakman"}]
+keywords = ["behave", "BDD", "testing", "parallel", "test runner"]
+requires-python = ">=3.10"
+dependencies = ["behave >= 1.3.3"]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: BDD",
+]
+
+[project.urls]
+Homepage = "https://github.com/wiebren/behave-parallel-runner"
+Issues = "https://github.com/wiebren/behave-parallel-runner/issues"
+
+[project.optional-dependencies]
+testing = ["pytest >= 7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "behave_parallel_runner.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
