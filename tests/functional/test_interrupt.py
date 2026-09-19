@@ -51,12 +51,26 @@ def wait_for_text(filename, text, timeout):
     return False
 
 
+SIGTERM_HANDLER_ENVIRONMENT_TEXT = u"""
+import signal
+
+def before_worker(context):
+    # -- LIKE: Graceful-shutdown handler of the application under test.
+    signal.signal(signal.SIGTERM, lambda signum, frame: None)
+    print("HOOK: WORKER-STARTED")
+"""
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="REQUIRES: SIGINT")
-def test_keyboard_interrupt_in_parent_terminates_workers(tmp_path):
+@pytest.mark.parametrize("environment_text", [
+    ENVIRONMENT_TEXT, SIGTERM_HANDLER_ENVIRONMENT_TEXT,
+], ids=["normal_workers", "workers_that_survive_sigterm"])
+def test_keyboard_interrupt_in_parent_terminates_workers(tmp_path,
+                                                         environment_text):
     features_dir = tmp_path / "features"
     (features_dir / "steps").mkdir(parents=True)
     (features_dir / "steps" / "steps.py").write_text(STEPS_TEXT)
-    (features_dir / "environment.py").write_text(ENVIRONMENT_TEXT)
+    (features_dir / "environment.py").write_text(environment_text)
     for index in range(1, 5):
         (features_dir / ("slow%d.feature" % index)).write_text(
             FEATURE_TEXT.format(index=index))
