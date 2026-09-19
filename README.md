@@ -42,6 +42,8 @@ like behave's own runner (including `before_all` / `after_all`).
 * Each worker builds a complete, isolated behave runtime: it re-reads the
   configuration files and command-line options, loads `environment.py` and
   the step definitions, and keeps one `Context` for its whole lifetime.
+* A worker gets its next feature file when it is done with the current one,
+  so the parent always knows which feature a worker runs.
 * The parent prints each feature's output as one block when the feature
   finishes (completion order), merges the counts of all workers into one
   summary, and computes the exit status like the sequential runner.
@@ -101,15 +103,60 @@ def after_worker(context):
     release_account(context.account)
 ```
 
+## Serial features
+
+Some features cannot run while anything else runs, for example because they
+change a system-wide setting. Tag them with `@serial`:
+
+```gherkin
+@serial
+Feature: Maintenance mode
+  ...
+```
+
+A feature file is serial if the tag is on the feature or on one of its rules,
+scenarios, scenario outlines or examples (the work unit is the feature file,
+so the whole file runs alone). A tagged scenario that is not selected, for
+example excluded with `--tags`, does not count.
+
+Serial features run after the other features, one at a time, while no other
+feature runs. They still run in a worker process with the normal hooks, and
+`context.worker_id` can be any of the worker ids.
+
 ## Formatters and reporters
 
 * `plain` and the `progress` formatters are supported (output arrives in
   whole-feature blocks); `pretty` is replaced by `plain`.
-* Formatters that need the complete test-run (`json`, `rerun`, the `steps.*`
-  and `tags` formatters, `bad_steps`, and formatter classes derived from them)
-  and any formatter bound to an `--outfile` are **rejected** with a
-  `ConfigError`: many workers cannot write one file, and silently producing no
-  report would be worse than failing. Use `--jobs=1` for those.
+* A built-in formatter with an `--outfile` is supported: the workers send its
+  output per feature and the parent appends these blocks to the outfile
+  (completion order), like it does on the console.
+* An own (or third-party) formatter with an `--outfile` must state how it
+  uses its outfile, with the class attribute `parallel_outfile`. Without it,
+  the formatter is rejected with a `ConfigError` (on the console, it needs
+  no such statement):
+
+  * `"merge"`: it writes to its output stream, like the built-in ones.
+  * `"direct"`: it does not use its output stream but writes own files, like
+    one file per test into a directory with the name of the outfile. Each
+    worker gives it the real outfile name. For example, for
+    [allure-behave](https://pypi.org/project/allure-behave/):
+
+    ```python
+    # -- FILE: parallel_allure.py  (use: -f parallel_allure:ParallelAllureFormatter -o allure-results)
+    from allure_behave.formatter import AllureFormatter
+
+    class ParallelAllureFormatter(AllureFormatter):
+        parallel_outfile = "direct"
+    ```
+* The `json` and `json.pretty` formatters (and formatter classes derived from
+  them) are supported, with or without `--outfile`: the parent merges the
+  JSON of all features into one report. It has the same content as in
+  sequential mode, with the features in completion order. A feature whose
+  worker process died is missing in it.
+* Formatters that need the complete test-run (`rerun`, the `steps.*` and
+  `tags` formatters, `bad_steps`, and formatter classes derived from them)
+  are **rejected** with a `ConfigError`: silently producing no report would
+  be worse than failing. Use `--jobs=1` for those.
 * An own formatter states what it needs with the class attribute
   `needs_complete_testrun`: `True` means "reject me with `--jobs > 1`"
   (instead of running once per worker); `False` on a class derived from a
@@ -129,15 +176,34 @@ def after_worker(context):
   `userdata`. These four are sent to the workers after the `before_parallel`
   hook has run, so this hook can still change them. Values that cannot be
   pickled (like a lock in `userdata`) are not sent; a warning names them.
-* **Fail-early is best effort:** with `--stop` (or `--wip`), pending feature
-  files are cancelled after the first failure, but features already running in
+* **Fail-early is best effort:** with `--stop` (or `--wip`), no further feature
+  files are started after the first failure, but features already running in
   a worker finish. The same applies if the test-run is aborted in one worker,
   for example with `context.abort()`: the other workers finish their current
   feature, the remaining features are reported as untested and the test-run
   fails (like in sequential mode).
 * **KeyboardInterrupt:** the worker processes are terminated at once.
   Their `after_worker` hooks and cleanups are not run in this case.
-* If a worker process dies (crash, `os._exit()`), the test-run is aborted.
+  A worker that has not ended after 5 seconds (it handles `SIGTERM`
+  or hangs) is killed.
+* An outfile that cannot be opened fails the test-run before any hook runs.
+  If the `before_parallel` hook has run, the `after_parallel` hook runs, too
+  (even if the runner itself fails with an unexpected error).
+* **If a worker process dies** (crash, `os._exit()`, killed), only the feature
+  that it ran is lost: this feature and its scenarios are reported as errored
+  (also in the JUnit report), a new worker with the same `context.worker_id`
+  takes its place and the test-run goes on. `before_worker` runs again for
+  the new worker; the `after_worker` hook and the cleanups of the died worker
+  never ran, so `before_worker` should cope with leftovers of its predecessor.
+  A worker that dies while it starts up aborts the test-run instead, because
+  a replacement would most likely die the same way.
+  A worker that dies between two features loses no feature; it is replaced,
+  too, but the test-run fails (its `after_worker` hook never ran).
+* **Child processes that a step leaves behind** do not block the test-run:
+  the parent checks once per second whether its workers are still alive.
+  But such a child process inherits the output of behave. If that output is
+  a pipe (like in most CI systems), whoever reads this pipe still waits until
+  the child process has ended.
 * The summary duration is the wall-clock time of the whole run.
 * Debugging is easier with `--jobs=1`: a debugger cannot be used in a worker
   process and tracebacks cross the process boundary as text.
