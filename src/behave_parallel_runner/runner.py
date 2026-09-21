@@ -1167,19 +1167,22 @@ class ParallelRunner(Runner):
         HINT: Must be called after the "before_parallel" hook, so that
         configuration changes made by this hook are seen by the workers.
 
-        A worker rebuilds its configuration like the parent process did:
-        from the command line and the config-files. If the configuration
-        was built programmatically, describe this with these (optional)
-        configuration attributes:
-
-        * ``config.command_args``: Command args as list (default: sys.argv).
-        * ``config.command_kwargs``: Keyword args of the Configuration.
-        * ``config.command_load_config``: If config-files are loaded.
+        A worker builds a configuration like the parent process did.
+        The configuration remembers how it was built (since: behave v1.4.0):
+        ``config.command_args``, ``config.command_kwargs`` and
+        ``config.command_load_config``.
         """
         config = self.config
+        command_args = getattr(config, "command_args", None)
+        if not isinstance(command_args, (list, tuple)):
+            # -- HINT: A development version of behave v1.4.0 that is older
+            # than this feature has the same version number.
+            raise ConfigError(
+                "PARALLEL: needs behave >= 1.4.0 (Configuration.command_args "
+                "is missing). Update behave.")
         dropped = []
         config_kwargs = select_picklable_params(
-            getattr(config, "command_kwargs", None) or {}, dropped)
+            dict(config.command_kwargs or {}), dropped)
 
         config_params = {name: getattr(config, name)
                          for name in PROPAGATED_CONFIG_PARAMS
@@ -1196,17 +1199,10 @@ class ParallelRunner(Runner):
             sys.stderr.write(
                 "PARALLEL: WARNING -- not picklable, therefore not sent "
                 "to the workers: %s\n" % ", ".join(sorted(dropped)))
-        # -- HINT: Without "config.command_args", a worker uses the command
-        # line of the parent process ("spawn" provides sys.argv to workers).
-        command_args = getattr(config, "command_args", None)
-        if isinstance(command_args, (list, tuple)):
-            command_args = list(command_args)
-        else:
-            command_args = None
         return {
-            "command_args": command_args,
+            "command_args": list(command_args),
             "config_kwargs": config_kwargs,
-            "load_config": getattr(config, "command_load_config", True),
+            "load_config": bool(config.command_load_config),
             "config_params": config_params,
             "worker_format": worker_formats,
             "jobs": config.jobs,
@@ -1243,23 +1239,11 @@ class ParallelRunner(Runner):
         for stream_opener in stream_openers:
             stream_opener.close()
 
-    def ensure_junit_directory_exists(self):
-        """Create the JUnit report directory before any worker needs it.
-
-        HINT: Workers write their per-feature JUnit reports concurrently and
-        the JUnit reporter does not create this directory in a race-free way.
-        """
-        config = self.config
-        junit_directory = getattr(config, "junit_directory", None)
-        if getattr(config, "junit", False) and isinstance(junit_directory, str):
-            os.makedirs(junit_directory, exist_ok=True)
-
     def run_parallel(self, work_items):
         config = self.config
         start_time = time.time()
         # -- HINT: Fail early (before any hook runs) on unsupported formats.
         worker_formats = self.select_worker_formats()
-        self.ensure_junit_directory_exists()
 
         self.context._set_root_attribute("jobs", config.jobs)
         summary_reporter = select_summary_reporter(config.reporters)

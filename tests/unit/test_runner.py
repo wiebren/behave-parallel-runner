@@ -470,27 +470,6 @@ class TestNeedsCompleteTestrun:
         assert formatter_classes == (JSONFormatter,)
 
 
-class TestEnsureJUnitDirectoryExists:
-    def test_creates_nested_directory_if_junit_is_enabled(self, tmp_path):
-        junit_directory = tmp_path/"reports"/"junit"
-        config = make_config(["--junit",
-                              "--junit-directory=%s" % junit_directory])
-        ParallelRunner(config).ensure_junit_directory_exists()
-        assert junit_directory.is_dir()
-
-    def test_existing_directory_is_tolerated(self, tmp_path):
-        config = make_config(["--junit", "--junit-directory=%s" % tmp_path])
-        ParallelRunner(config).ensure_junit_directory_exists()
-        assert tmp_path.is_dir()
-
-    def test_creates_nothing_if_junit_is_disabled(self, tmp_path):
-        junit_directory = tmp_path/"reports"
-        config = make_config(["--junit-directory=%s" % junit_directory])
-        assert not config.junit
-        ParallelRunner(config).ensure_junit_directory_exists()
-        assert not junit_directory.exists()
-
-
 class TestSelectOutfileBoundFormats:
     def test_named_stream_opener_is_outfile_bound(self):
         config = make_config(["-f", "plain", "-o", "out.txt"])
@@ -766,40 +745,29 @@ class TestMakeWorkerSetup:
         assert "PARALLEL: WARNING" in captured.err
         assert "userdata[lock]" in captured.err
 
-    def test_without_command_args_workers_use_command_line(self):
-        # -- HINT: command_args=None means "use sys.argv" in a worker
-        # (the "spawn" start-method provides the parent's sys.argv).
-        runner = ParallelRunner(make_config(["--jobs=2"]))
-        for name in ("command_args", "command_kwargs", "command_load_config"):
-            # -- HINT: A behave version may provide these attributes itself.
-            if hasattr(runner.config, name):
-                delattr(runner.config, name)
-        worker_setup = runner.make_worker_setup(["plain"])
-        assert worker_setup["command_args"] is None
-        assert worker_setup["config_kwargs"] == {}
-        assert worker_setup["load_config"] is True
-
-    def test_programmatic_configuration_can_be_described(self):
-        # -- HINT: Optional config attributes describe how it was built.
-        runner = ParallelRunner(make_config(["--jobs=2"], tags="@one"))
-        runner.config.command_args = ("--jobs=2", "features")
-        runner.config.command_kwargs = {"tags": "@one"}
-        runner.config.command_load_config = False
-        worker_setup = runner.make_worker_setup(["plain"])
+    def test_workers_build_the_configuration_like_the_parent(self):
+        # -- HINT: The configuration remembers how it was built (behave v1.4.0).
+        config = Configuration(["--jobs=2", "features"], load_config=False,
+                               tags="@one")
+        worker_setup = ParallelRunner(config).make_worker_setup(["plain"])
         assert worker_setup["command_args"] == ["--jobs=2", "features"]
         assert worker_setup["config_kwargs"] == {"tags": "@one"}
         assert worker_setup["load_config"] is False
 
     def test_empty_command_args_are_kept(self):
         # -- HINT: An empty list must not be replaced by sys.argv.
-        runner = ParallelRunner(make_config())
-        runner.config.command_args = []
-        worker_setup = runner.make_worker_setup(["plain"])
+        worker_setup = ParallelRunner(make_config()).make_worker_setup(["plain"])
         assert worker_setup["command_args"] == []
 
+    def test_behave_without_this_support_is_rejected(self):
+        # -- HINT: An older development version has the same version number.
+        runner = ParallelRunner(make_config(["--jobs=2"]))
+        del runner.config.command_args
+        with pytest.raises(ConfigError, match="needs behave >= 1.4.0"):
+            runner.make_worker_setup(["plain"])
+
     def test_non_picklable_config_kwargs_are_reported(self, capsys):
-        runner = ParallelRunner(make_config())
-        runner.config.command_kwargs = {"my_param": lambda: None}
+        runner = ParallelRunner(make_config(my_param=lambda: None))
         worker_setup = runner.make_worker_setup(["plain"])
         assert "my_param" not in worker_setup["config_kwargs"]
         assert "my_param" in capsys.readouterr().err

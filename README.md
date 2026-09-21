@@ -7,13 +7,17 @@ with `--jobs N` (N > 1), feature files run concurrently in worker processes.
 $ behave --jobs 4
 ```
 
-It plugs into behave's runner extension-point. No patched behave is needed:
-it works with the released `behave >= 1.3.3`.
+It plugs into behave's runner extension-point; no patched behave is needed.
+It requires `behave >= 1.4.0`.
 
 ## Installation
 
+behave v1.4.0 is not released yet. Until it is, install behave from its
+repository, too:
+
 ```console
-$ pip install git+https://github.com/wiebren/behave-parallel-runner
+$ pip install git+https://github.com/behave/behave@main \
+              git+https://github.com/wiebren/behave-parallel-runner
 ```
 
 Select the runner in your behave config-file:
@@ -210,9 +214,9 @@ feature runs. They still run in a worker process with the normal hooks, and
 
 ### Programmatic use
 
-Workers rebuild the configuration from the command line of the parent
-process. If you build the `Configuration` yourself, describe how you did it,
-so that the workers can do the same:
+A worker builds its own configuration like the parent process did. A
+`Configuration` object remembers how it was built (since behave v1.4.0),
+so this works for a configuration that you build yourself, too:
 
 ```python
 from behave.configuration import Configuration
@@ -221,9 +225,6 @@ from behave.__main__ import run_behave
 if __name__ == "__main__":      # -- REQUIRED: "spawn" re-imports __main__.
     args = ["--jobs=4", "-r", "behave_parallel_runner:ParallelRunner", "features"]
     config = Configuration(args, load_config=False)
-    config.command_args = args              # default: sys.argv[1:]
-    config.command_kwargs = {}              # keyword args of Configuration()
-    config.command_load_config = False      # default: True
     raise SystemExit(run_behave(config))
 ```
 

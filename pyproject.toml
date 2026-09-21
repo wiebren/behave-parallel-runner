@@ -10,7 +10,9 @@ license = {text = "BSD-2-Clause"}
 authors = [{name = "Wiebren Braakman"}]
 keywords = ["behave", "BDD", "testing", "parallel", "test runner"]
 requires-python = ">=3.10"
-dependencies = ["behave >= 1.3.3"]
+# -- HINT: behave v1.4.0 is needed; its development version is accepted
+# (until v1.4.0 is released: install behave from its repository).
+dependencies = ["behave >= 1.4.0.dev0"]
 dynamic = ["version"]
 classifiers = [
     "Development Status :: 4 - Beta",
