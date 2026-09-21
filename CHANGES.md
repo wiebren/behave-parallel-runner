@@ -2,6 +2,11 @@
 
 ## 0.1.0 (unreleased)
 
+* Requires `behave >= 1.4.0` (until it is released: its development version).
+  behave provides there what this package had to work around before:
+  a `Configuration` remembers how it was built, so programmatic use needs no
+  `config.command_args`, ... description anymore (behave #1349), and the JUnit
+  reporter creates its report directory race-free (behave #1345).
 * Initial version: `ParallelRunner` runs feature files in worker processes
   with `--jobs N`; parallel-mode hooks `before_parallel` / `after_parallel`
   and `before_worker` / `after_worker`; `context.worker_id`, `context.jobs`.
