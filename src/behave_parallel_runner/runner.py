@@ -56,6 +56,7 @@ import io
 import json
 import multiprocessing
 import multiprocessing.connection
+import multiprocessing.resource_tracker
 import os
 import pickle
 import sys
@@ -689,6 +690,46 @@ def _report_errored_feature(runner, feature):
             traceback.print_exc()
 
 
+def needs_resource_tracker_release_after_fork():
+    """Check if this Python version lets a process hang when it exits, as long
+    as a process lives that was forked by one of its multiprocessing children.
+
+    A worker process inherits the write end of the pipe of the resource
+    tracker process (of :mod:`multiprocessing`), and so does a child process
+    that a step forks with ``os.fork()``. The resource tracker only ends when
+    all these copies are closed. Python 3.12 added ``ResourceTracker.__del__()``
+    that waits for the resource tracker when the process exits -- without any
+    timeout: behave hangs after its summary until the forked child has ended.
+
+    Fixed in CPython (gh-146313, not in Python 3.12): A forked child closes
+    its copy, see ``ResourceTracker._after_fork_in_child()``.
+    """
+    tracker_class = multiprocessing.resource_tracker.ResourceTracker
+    return (hasattr(os, "register_at_fork")
+            and hasattr(tracker_class, "__del__")
+            and not hasattr(tracker_class, "_after_fork_in_child"))
+
+
+def release_resource_tracker_in_forked_child():
+    """Close the inherited connection to the resource tracker process
+    (called in a child process right after ``os.fork()``).
+
+    HINT: Same as CPython does (gh-146313). If this child process needs a
+    resource tracker later on, :mod:`multiprocessing` launches a new one.
+    """
+    # pylint: disable=protected-access
+    tracker = multiprocessing.resource_tracker._resource_tracker
+    fd = getattr(tracker, "_fd", None)
+    if fd is None:
+        return
+    tracker._fd = None
+    tracker._pid = None
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 def _worker_main(worker_id, worker_setup, connection, shutdown_failures):
     """Main function of one worker process: runs the tasks of the parent.
 
@@ -700,6 +741,9 @@ def _worker_main(worker_id, worker_setup, connection, shutdown_failures):
       or None (worker should shut down).
     * worker => parent: ("result", result) for each task.
     """
+    if needs_resource_tracker_release_after_fork():
+        os.register_at_fork(
+            after_in_child=release_resource_tracker_in_forked_child)
     try:
         _worker_init(worker_setup, worker_id, shutdown_failures)
         connection.send(("ready", {

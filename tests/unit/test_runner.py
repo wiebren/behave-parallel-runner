@@ -1738,3 +1738,76 @@ class TestRunFeatureTask:
         assert "XFAIL-FORMATTER" in result["error_text"]
         assert [f.status for f in collector.features] == [Status.error]
 
+
+
+# -----------------------------------------------------------------------------
+# RESOURCE TRACKER: A child process that a step has forked must not keep it
+# alive (Python 3.12: behave hangs when it exits, see: CPython gh-146313).
+# -----------------------------------------------------------------------------
+class TestResourceTrackerReleaseAfterFork:
+    class TrackerWithoutDel:
+        """LIKE: Python < 3.12 (nobody waits for the resource tracker)."""
+
+    class TrackerWithBlockingDel:
+        """LIKE: Python 3.12 (waits without timeout)."""
+        def __del__(self):
+            pass
+
+    class TrackerWithFix(TrackerWithBlockingDel):
+        """LIKE: CPython with gh-146313."""
+        def _after_fork_in_child(self):
+            pass
+
+    @pytest.mark.parametrize("tracker_class, expected", [
+        (TrackerWithoutDel, False),
+        (TrackerWithBlockingDel, True),
+        (TrackerWithFix, False),
+    ])
+    def test_is_only_needed_if_python_waits_without_the_fix(
+            self, monkeypatch, tracker_class, expected):
+        from multiprocessing import resource_tracker
+        monkeypatch.setattr(resource_tracker, "ResourceTracker", tracker_class)
+        assert runner_parallel.needs_resource_tracker_release_after_fork() \
+            is expected
+
+    def test_matches_this_python_version(self):
+        import sys
+        expected = {(3, 10): False, (3, 11): False, (3, 12): True}
+        version = sys.version_info[:2]
+        if version not in expected:
+            pytest.skip("Depends on the patch release of this Python version")
+        assert runner_parallel.needs_resource_tracker_release_after_fork() \
+            is expected[version]
+
+    @staticmethod
+    def use_fake_tracker(monkeypatch, fd, pid=1234):
+        from multiprocessing import resource_tracker
+        tracker = SimpleNamespace(_fd=fd, _pid=pid)
+        monkeypatch.setattr(resource_tracker, "_resource_tracker", tracker)
+        return tracker
+
+    def test_release_closes_the_inherited_connection(self, monkeypatch):
+        import os
+        read_fd, write_fd = os.pipe()
+        try:
+            tracker = self.use_fake_tracker(monkeypatch, write_fd)
+            runner_parallel.release_resource_tracker_in_forked_child()
+            assert tracker._fd is None and tracker._pid is None
+            # -- CLOSED: The other end sees the end of the stream.
+            assert os.read(read_fd, 1) == b""
+        finally:
+            os.close(read_fd)
+
+    def test_release_without_resource_tracker_does_nothing(self, monkeypatch):
+        tracker = self.use_fake_tracker(monkeypatch, None)
+        runner_parallel.release_resource_tracker_in_forked_child()
+        assert tracker._fd is None and tracker._pid == 1234
+
+    def test_release_tolerates_a_closed_connection(self, monkeypatch):
+        import os
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        os.close(write_fd)
+        tracker = self.use_fake_tracker(monkeypatch, write_fd)
+        runner_parallel.release_resource_tracker_in_forked_child()
+        assert tracker._fd is None

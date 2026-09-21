@@ -2,6 +2,9 @@
 
 ## 0.1.0 (unreleased)
 
+* FIXED: With Python 3.12, behave did not exit after its summary as long as
+  a child process lived that a step had forked with `os.fork()` (it waited
+  for the resource tracker of `multiprocessing`; CPython gh-146313).
 * Requires `behave >= 1.4.0` (until it is released: its development version).
   behave provides there what this package had to work around before:
   a `Configuration` remembers how it was built, so programmatic use needs no
